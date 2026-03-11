@@ -73,6 +73,21 @@ app.layout = dbc.Container([
                     className="mb-3"
                 ),
                 
+                # Crop height input (only visible when crop legend is checked)
+                html.Div([
+                    html.Label("Crop Height (pixels from bottom)", className="form-label"),
+                    dbc.Input(
+                        id="crop-height-input",
+                        type="number",
+                        placeholder="e.g. 100",
+                        min=1,
+                        max=2000,
+                        value=None,
+                        className="mb-2"
+                    ),
+                    html.Small("Leave empty for automatic legend detection", className="form-text text-muted"),
+                ], id="crop-height-container", className="mb-3", style={"display": "none"}),
+                
                 # Checkbox for fast mask processing
                 dbc.Checklist(
                     options=[
@@ -618,6 +633,7 @@ def clear_masks_on_new_rectangle(relayoutData, current_mask_state, current_pores
     Input('btn-full-porosity', 'n_clicks'),
     [State('image-store', 'data'),
      State('crop-legend-checkbox', 'value'),
+     State('crop-height-input', 'value'),
      State('fast-mask-checkbox', 'value'),
      State('processing-size-input', 'value'),
      State('open-kernel-ratio-slider', 'value'),
@@ -633,7 +649,7 @@ def clear_masks_on_new_rectangle(relayoutData, current_mask_state, current_pores
      State('border-toggle-store', 'data')],
     prevent_initial_call=True
 )
-def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, fast_mask_value, processing_size, open_kernel_ratio_idx, close_kernel_ratio_idx, open_iterations, close_iterations, border_pixels, border_ratio_idx, threshold_value, mask_threshold_value, current_mask_state, current_pores_state, current_border_state):
+def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_height, fast_mask_value, processing_size, open_kernel_ratio_idx, close_kernel_ratio_idx, open_iterations, close_iterations, border_pixels, border_ratio_idx, threshold_value, mask_threshold_value, current_mask_state, current_pores_state, current_border_state):
     """Calculate and display full image porosity"""
     # Only calculate if button was clicked and we have image data
     if btn_clicks is None or image_data is None:
@@ -669,6 +685,7 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, fast_mask
         porosity, binary_img, mask, combined_mask, border_porosity, border_combined_mask, border_mask = analyze_porosity(
             temp_path, 
             crop_legend_enabled=crop_legend_enabled,
+            crop_height=crop_height,
             open_kernel_ratio=open_kernel_ratio,
             close_kernel_ratio=close_kernel_ratio,
             manual_threshold=threshold_value,
@@ -747,11 +764,14 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, fast_mask
 # Add callback for calculating porosity on button click (manual)
 @app.callback(
     [Output('region-result', 'children'),
-     Output('region-result', 'style')],
+     Output('region-result', 'style'),
+     Output('pores-toggle-store', 'data', allow_duplicate=True),
+     Output('image-graph', 'figure', allow_duplicate=True)],
     Input('btn-region-porosity', 'n_clicks'),
     [State('selection-store', 'data'),
      State('image-store', 'data'),
      State('crop-legend-checkbox', 'value'),
+     State('crop-height-input', 'value'),
      State('fast-mask-checkbox', 'value'),
      State('processing-size-input', 'value'),
      State('open-kernel-ratio-slider', 'value'),
@@ -759,13 +779,16 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, fast_mask
      State('open-iterations-slider', 'value'),
      State('close-iterations-slider', 'value'),
      State('threshold-slider', 'value'),
-     State('mask-threshold-slider', 'value')],
+     State('mask-threshold-slider', 'value'),
+     State('pores-toggle-store', 'data'),
+     State('image-graph', 'figure'),
+     State('image-graph', 'relayoutData')],
     prevent_initial_call=True
 )
-def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legend_value, fast_mask_value, processing_size, open_kernel_ratio_idx, close_kernel_ratio_idx, open_iterations, close_iterations, threshold_value, mask_threshold_value):
+def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legend_value, crop_height, fast_mask_value, processing_size, open_kernel_ratio_idx, close_kernel_ratio_idx, open_iterations, close_iterations, threshold_value, mask_threshold_value, current_pores_state, current_figure, relayout_data):
     """Calculate porosity when button is clicked for selected region"""
     if btn_clicks is None or not selection_data or not image_data or 'shapes' not in selection_data:
-        return "", {"display": "none"}
+        return "", {"display": "none"}, dash.no_update, dash.no_update
     
     crop_legend_enabled = 'crop_legend' in (crop_legend_value or [])
     fast_mask_enabled = 'fast_mask' in (fast_mask_value or [])
@@ -793,30 +816,120 @@ def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legen
             temp_crop_path = "temp_cropped.png"
             cv2.imwrite(temp_crop_path, cropped_img)
             
-            porosity, _, _, _ , _, _, _ = analyze_porosity(
+            porosity, binary_img, mask, combined_mask, border_porosity, border_combined_mask, border_mask = analyze_porosity(
                 temp_crop_path, 
-                crop_legend_enabled=crop_legend_enabled,
+                crop_legend_enabled=False,  # Never crop legend for region analysis
+                crop_height=None,  # Never use crop height for region analysis
                 open_kernel_ratio=open_kernel_ratio,
                 close_kernel_ratio=close_kernel_ratio,
-                manual_threshold=threshold_value,  # Use default OTSU for pore analysis
+                manual_threshold=threshold_value,  # Use manual threshold for pore analysis
                 mask_threshold=0,  # Use default OTSU for region analysis
                 use_area_of_interest=False,  # Skip area of interest for region analysis
                 open_iterations=open_iterations,
                 close_iterations=close_iterations,
                 border_pixels=None,  # Default border parameters for region analysis
                 border_ratio=0.10,
-                fast_mask_enabled=False,
+                fast_mask_enabled=fast_mask_enabled,  # Use user's fast mask setting
                 processing_size=processing_size
             )
+            
+            # Create a full-size pores mask for the region by mapping back to original image coordinates
+            if current_pores_state and selection_data and 'shapes' in selection_data:
+                # Get the selection coordinates
+                shape = selection_data['shapes'][-1]
+                x0 = int(shape['x0'])
+                y0 = int(shape['y0']) 
+                x1 = int(shape['x1'])
+                y1 = int(shape['y1'])
+                
+                # Ensure coordinates are within image bounds
+                height, width = img_cv.shape[:2]
+                x0 = max(0, min(x0, width))
+                x1 = max(0, min(x1, width))
+                y0 = max(0, min(y0, height))
+                y1 = max(0, min(y1, height))
+                
+                # Create a full-size mask with zeros
+                full_size_pores_mask = np.zeros((height, width), dtype=np.uint8)
+                
+                # Resize the region pores mask to match the selected area size
+                region_height = y1 - y0
+                region_width = x1 - x0
+                if region_height > 0 and region_width > 0:
+                    resized_pores_mask = cv2.resize(combined_mask, (region_width, region_height), interpolation=cv2.INTER_NEAREST)
+                    # Place it in the correct position in the full-size mask
+                    full_size_pores_mask[y0:y1, x0:x1] = resized_pores_mask
+                
+                # Save the updated pores mask for visualization
+                cv2.imwrite("temp_pores.png", full_size_pores_mask)
+                
+                # Create updated figure with pores overlay while preserving zoom/pan state
+                fig = create_image_figure(img_pil, "Pores Mask (Bright Blue = Pores)")
+                
+                # Add blue pores mask overlay
+                try:
+                    import os
+                    if os.path.exists("temp_pores.png"):
+                        pores_mask = cv2.imread("temp_pores.png", cv2.IMREAD_GRAYSCALE)
+                        blue_mask = np.zeros((pores_mask.shape[0], pores_mask.shape[1], 4), dtype=np.uint8)
+                        blue_mask[pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
+                        blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
+                        
+                        fig.add_layout_image(
+                            dict(
+                                source=blue_mask_pil,
+                                xref="x",
+                                yref="y",
+                                x=0,
+                                y=0,
+                                sizex=img_pil.width,
+                                sizey=img_pil.height,
+                                sizing="stretch",
+                                opacity=1.0,
+                                layer="above"
+                            )
+                        )
+                except Exception:
+                    pass
+                
+                # Preserve zoom/pan state from current figure and relayout data
+                if current_figure and 'layout' in current_figure:
+                    if 'xaxis' in current_figure['layout'] and 'range' in current_figure['layout']['xaxis']:
+                        fig.update_layout(xaxis=dict(range=current_figure['layout']['xaxis']['range']))
+                    if 'yaxis' in current_figure['layout'] and 'range' in current_figure['layout']['yaxis']:
+                        fig.update_layout(yaxis=dict(range=current_figure['layout']['yaxis']['range']))
+                
+                # Also check relayout_data for more recent zoom/pan changes
+                if relayout_data:
+                    if 'xaxis.range[0]' in relayout_data and 'xaxis.range[1]' in relayout_data:
+                        fig.update_layout(xaxis=dict(range=[relayout_data['xaxis.range[0]'], relayout_data['xaxis.range[1]']]))
+                    if 'yaxis.range[0]' in relayout_data and 'yaxis.range[1]' in relayout_data:
+                        fig.update_layout(yaxis=dict(range=[relayout_data['yaxis.range[0]'], relayout_data['yaxis.range[1]']]))
+                    elif 'xaxis.range' in relayout_data:
+                        fig.update_layout(xaxis=dict(range=relayout_data['xaxis.range']))
+                    if 'yaxis.range' in relayout_data:
+                        fig.update_layout(yaxis=dict(range=relayout_data['yaxis.range']))
+                
+                # Preserve any drawn rectangles from selection_data
+                if selection_data and 'shapes' in selection_data:
+                    fig.update_layout(shapes=selection_data['shapes'])
+                
+                # Keep pores toggle active to refresh visualization
+                pores_toggle_state = True
+                updated_figure = fig
+            else:
+                pores_toggle_state = current_pores_state
+                updated_figure = dash.no_update
+            
             result = f"Selected Region Porosity: {porosity:.2f}%"
             
-            return result, {"display": "block"}
+            return result, {"display": "block"}, pores_toggle_state, updated_figure
         else:
-            return "Invalid selection area", {"display": "block"}
+            return "Invalid selection area", {"display": "block"}, dash.no_update, dash.no_update
             
     except Exception as e:
         error_result = f"Error calculating region porosity: {str(e)}"
-        return error_result, {"display": "block"}
+        return error_result, {"display": "block"}, dash.no_update, dash.no_update
 
 @app.callback(
     Output('image-graph', 'figure', allow_duplicate=True),
@@ -1231,6 +1344,18 @@ def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_borde
         
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update
+
+# Callback to show/hide crop height input based on legend cropping checkbox
+@app.callback(
+    Output("crop-height-container", "style"),
+    [Input("crop-legend-checkbox", "value")]
+)
+def toggle_crop_height_input(crop_legend_value):
+    """Show/hide crop height input based on legend cropping checkbox"""
+    if crop_legend_value and "crop_legend" in crop_legend_value:
+        return {"display": "block"}
+    else:
+        return {"display": "none"}
 
 if __name__ == '__main__':
     app.run(debug=True, host='127.0.0.1', port=8050)

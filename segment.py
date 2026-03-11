@@ -4,7 +4,8 @@ import numpy as np
 
 def crop_legend(img, img_path, png_legend_ratio=1/45, 
                 bmp_legend_height=0.08, bmp_legend_height_value=200,
-                bmp_legend_width=0.4, bmp_legend_width_value=3000):
+                bmp_legend_width=0.4, bmp_legend_width_value=3000,
+                crop_height=None):
     """
     Crop legend from microscopy images based on file type
     
@@ -16,7 +17,18 @@ def crop_legend(img, img_path, png_legend_ratio=1/45,
     - bmp_legend_height_value: absolute value for BMP legend height (default 200)
     - bmp_legend_width: ratio for BMP legend width cropping (default 0.4)
     - bmp_legend_width_value: absolute value for BMP legend width (default 3000)
+    - crop_height: specific number of pixels to black out from bottom (default None)
     """
+    # If crop_height is specified, black out the bottom portion
+    if crop_height is not None:
+        img_copy = img.copy()
+        height = img_copy.shape[0]
+        # Black out pixels from (height - crop_height) to the bottom
+        start_row = max(0, height - crop_height)
+        img_copy[start_row:, :] = 0
+        return img_copy
+    
+    # Original logic for different file types
     if img_path.endswith('.jpg') or img_path.endswith('.png'):
         legend_crop_value = int(img.shape[0] * png_legend_ratio)
         cropped_img = img[legend_crop_value:, :]  # crop the legend
@@ -223,7 +235,7 @@ def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/20
                     manual_threshold=0, mask_threshold=0, use_area_of_interest=True, open_iterations=1, close_iterations=1, 
                     border_pixels=None, border_ratio=0.10, fast_mask_enabled=True, processing_size=512,
                     png_legend_ratio=1/45, bmp_legend_height=0.08, bmp_legend_height_value=200,
-                    bmp_legend_width=0.4, bmp_legend_width_value=3000):
+                    bmp_legend_width=0.4, bmp_legend_width_value=3000, crop_height=None):
     """
     Analyze porosity from microscopy images
     
@@ -246,6 +258,7 @@ def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/20
     - bmp_legend_height_value: absolute value for BMP legend height (default 200)
     - bmp_legend_width: ratio for BMP legend width cropping (default 0.4)
     - bmp_legend_width_value: absolute value for BMP legend width (default 3000)
+    - crop_height: specific number of pixels to black out from bottom (default None)
     
     Returns:
     - porosity: porosity percentage
@@ -267,7 +280,8 @@ def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/20
     if crop_legend_enabled:
         processed_img = crop_legend(img, img_path, png_legend_ratio, 
                                    bmp_legend_height, bmp_legend_height_value,
-                                   bmp_legend_width, bmp_legend_width_value)
+                                   bmp_legend_width, bmp_legend_width_value,
+                                   crop_height)
     else:
         processed_img = img
     
