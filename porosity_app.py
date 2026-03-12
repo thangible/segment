@@ -311,7 +311,7 @@ app.layout = dbc.Container([
             html.Div([
                 dbc.ButtonGroup([
                     dbc.Button(
-                        "🔴 Area Mask", 
+                        "🔴 Mask", 
                         id="mask-toggle-btn",
                         color="secondary",
                         outline=True,
@@ -325,14 +325,14 @@ app.layout = dbc.Container([
                         size="sm"
                     ),
                     dbc.Button(
-                        "� Border", 
+                        "🟡 Border", 
                         id="border-toggle-btn",
                         color="secondary", 
                         outline=True,
                         size="sm"
                     ),
                     dbc.Button(
-                        "�🗑️ Clear Areas", 
+                        "🗑️ Clear Areas", 
                         id="clear-rectangles-btn",
                         color="warning",
                         outline=True,
