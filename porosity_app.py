@@ -371,8 +371,9 @@ app.layout = dbc.Container([
     # Store components for data persistence
     dcc.Store(id='image-store'),
     dcc.Store(id='selection-store'),
-    dcc.Store(id='mask-store'),  # Full image mask only
-    dcc.Store(id='pores-mask-store'),  # Pores (combined_mask) data
+    dcc.Store(id='mask-store'),  # Area of interest mask (base64 encoded)
+    dcc.Store(id='pores-mask-store'),  # Pores mask (base64 encoded)
+    dcc.Store(id='border-mask-store'),  # Border mask (base64 encoded)
     dcc.Store(id='binary-img-store'),  # Binary image for processing
     dcc.Store(id='mask-toggle-store', data=False),  # Store mask toggle state
     dcc.Store(id='pores-toggle-store', data=False),  # Store pores toggle state
@@ -394,6 +395,25 @@ app.layout = dbc.Container([
     dcc.Interval(id="notification-interval", interval=3000, n_intervals=0, disabled=True),
     
 ], fluid=True)
+
+def encode_mask_to_base64(mask):
+    """Convert numpy array mask to base64 string for storage"""
+    if mask is None:
+        return None
+    # Encode mask as PNG to base64
+    _, buffer = cv2.imencode('.png', mask)
+    mask_b64 = base64.b64encode(buffer).decode()
+    return mask_b64
+
+def decode_mask_from_base64(mask_b64):
+    """Convert base64 string back to numpy array mask"""
+    if mask_b64 is None:
+        return None
+    # Decode base64 to numpy array
+    mask_bytes = base64.b64decode(mask_b64)
+    mask_array = np.frombuffer(mask_bytes, dtype=np.uint8)
+    mask = cv2.imdecode(mask_array, cv2.IMREAD_GRAYSCALE)
+    return mask
 
 def parse_contents(contents):
     """Parse uploaded file contents"""
@@ -629,7 +649,10 @@ def clear_masks_on_new_rectangle(relayoutData, current_mask_state, current_pores
      Output('notification-interval', 'disabled', allow_duplicate=True),
      Output('mask-toggle-store', 'data', allow_duplicate=True),
      Output('pores-toggle-store', 'data', allow_duplicate=True),
-     Output('border-toggle-store', 'data', allow_duplicate=True)],
+     Output('border-toggle-store', 'data', allow_duplicate=True),
+     Output('mask-store', 'data'),
+     Output('pores-mask-store', 'data'),
+     Output('border-mask-store', 'data')],
     Input('btn-full-porosity', 'n_clicks'),
     [State('image-store', 'data'),
      State('crop-legend-checkbox', 'value'),
@@ -653,7 +676,7 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_heig
     """Calculate and display full image porosity"""
     # Only calculate if button was clicked and we have image data
     if btn_clicks is None or image_data is None:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     
     crop_legend_enabled = 'crop_legend' in (crop_legend_value or [])
     fast_mask_enabled = 'fast_mask' in (fast_mask_value or [])
@@ -677,13 +700,9 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_heig
         img_pil = Image.open(io.BytesIO(img_bytes))
         img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
         
-        # Save temporary image file for analysis
-        temp_path = "temp_image.png"
-        cv2.imwrite(temp_path, img_cv)
-        
-        # Analyze porosity for full image
+        # Analyze porosity for full image using cv2 image directly
         porosity, binary_img, mask, combined_mask, border_porosity, border_combined_mask, border_mask = analyze_porosity(
-            temp_path, 
+            img_cv, 
             crop_legend_enabled=crop_legend_enabled,
             crop_height=crop_height,
             open_kernel_ratio=open_kernel_ratio,
@@ -699,10 +718,10 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_heig
             processing_size=processing_size
         )
         
-        # Save mask files for toggling
-        cv2.imwrite("temp_mask.png", mask)  # Area of interest mask
-        cv2.imwrite("temp_pores.png", combined_mask)  # Pores mask
-        cv2.imwrite("temp_border.png", border_mask)  # Border mask
+        # Store masks in base64 format for in-memory caching
+        mask_b64 = encode_mask_to_base64(mask)  # Area of interest mask
+        pores_mask_b64 = encode_mask_to_base64(combined_mask)  # Pores mask  
+        border_mask_b64 = encode_mask_to_base64(border_mask)  # Border mask
         
         result = f"Full Image Porosity: {porosity:.2f}% | Border Porosity: {border_porosity:.2f}%"
         
@@ -728,14 +747,14 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_heig
         # If any toggle is currently active, keep it active to refresh the visualization
         # with the newly calculated masks
         if current_mask_state:
-            return result, {"display": "block"}, "", success_notification, success_style, False, True, False, False
+            return result, {"display": "block"}, "", success_notification, success_style, False, True, False, False, mask_b64, pores_mask_b64, border_mask_b64
         elif current_pores_state:
-            return result, {"display": "block"}, "", success_notification, success_style, False, False, True, False
+            return result, {"display": "block"}, "", success_notification, success_style, False, False, True, False, mask_b64, pores_mask_b64, border_mask_b64
         elif current_border_state:
-            return result, {"display": "block"}, "", success_notification, success_style, False, False, False, True
+            return result, {"display": "block"}, "", success_notification, success_style, False, False, False, True, mask_b64, pores_mask_b64, border_mask_b64
         else:
             # No toggles are active, don't change anything
-            return result, {"display": "block"}, "", success_notification, success_style, False, dash.no_update, dash.no_update, dash.no_update
+            return result, {"display": "block"}, "", success_notification, success_style, False, dash.no_update, dash.no_update, dash.no_update, mask_b64, pores_mask_b64, border_mask_b64
         
     except Exception as e:
         error_result = f"Error calculating full image porosity: {str(e)}"
@@ -759,7 +778,7 @@ def calculate_full_porosity(btn_clicks, image_data, crop_legend_value, crop_heig
             "minWidth": "150px"
         }
         
-        return error_result, {"display": "block"}, "", error_notification, error_style, False, dash.no_update, dash.no_update, dash.no_update
+        return error_result, {"display": "block"}, "", error_notification, error_style, False, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 # Add callback for calculating porosity on button click (manual)
 @app.callback(
@@ -812,12 +831,9 @@ def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legen
         cropped_img = crop_image_from_selection(img_cv, selection_data)
         
         if cropped_img.size > 0:
-            # Save cropped image temporarily
-            temp_crop_path = "temp_cropped.png"
-            cv2.imwrite(temp_crop_path, cropped_img)
-            
+            # Analyze porosity directly on cropped image (no file I/O)
             porosity, binary_img, mask, combined_mask, border_porosity, border_combined_mask, border_mask = analyze_porosity(
-                temp_crop_path, 
+                cropped_img, 
                 crop_legend_enabled=False,  # Never crop legend for region analysis
                 crop_height=None,  # Never use crop height for region analysis
                 open_kernel_ratio=open_kernel_ratio,
@@ -860,37 +876,28 @@ def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legen
                     # Place it in the correct position in the full-size mask
                     full_size_pores_mask[y0:y1, x0:x1] = resized_pores_mask
                 
-                # Save the updated pores mask for visualization
-                cv2.imwrite("temp_pores.png", full_size_pores_mask)
-                
                 # Create updated figure with pores overlay while preserving zoom/pan state
                 fig = create_image_figure(img_pil, "Pores Mask (Bright Blue = Pores)")
                 
-                # Add blue pores mask overlay
-                try:
-                    import os
-                    if os.path.exists("temp_pores.png"):
-                        pores_mask = cv2.imread("temp_pores.png", cv2.IMREAD_GRAYSCALE)
-                        blue_mask = np.zeros((pores_mask.shape[0], pores_mask.shape[1], 4), dtype=np.uint8)
-                        blue_mask[pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
-                        blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
-                        
-                        fig.add_layout_image(
-                            dict(
-                                source=blue_mask_pil,
-                                xref="x",
-                                yref="y",
-                                x=0,
-                                y=0,
-                                sizex=img_pil.width,
-                                sizey=img_pil.height,
-                                sizing="stretch",
-                                opacity=1.0,
-                                layer="above"
-                            )
-                        )
-                except Exception:
-                    pass
+                # Add blue pores mask overlay directly from in-memory mask
+                blue_mask = np.zeros((full_size_pores_mask.shape[0], full_size_pores_mask.shape[1], 4), dtype=np.uint8)
+                blue_mask[full_size_pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
+                blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
+                
+                fig.add_layout_image(
+                    dict(
+                        source=blue_mask_pil,
+                        xref="x",
+                        yref="y",
+                        x=0,
+                        y=0,
+                        sizex=img_pil.width,
+                        sizey=img_pil.height,
+                        sizing="stretch",
+                        opacity=1.0,
+                        layer="above"
+                    )
+                )
                 
                 # Preserve zoom/pan state from current figure and relayout data
                 if current_figure and 'layout' in current_figure:
@@ -938,11 +945,14 @@ def calculate_region_porosity(btn_clicks, selection_data, image_data, crop_legen
      Input('border-toggle-store', 'data'),
      Input('image-store', 'data')],
     [State('selection-store', 'data'),
-     State('image-graph', 'relayoutData')],
+     State('image-graph', 'relayoutData'),
+     State('mask-store', 'data'),
+     State('pores-mask-store', 'data'),
+     State('border-mask-store', 'data')],
     prevent_initial_call=True
 )
-def toggle_mask_view(show_mask, show_pores_enabled, show_border_enabled, image_data, selection_data, relayout_data):
-    """Fast toggle between image layers using saved mask files while preserving drawn rectangles"""
+def toggle_mask_view(show_mask, show_pores_enabled, show_border_enabled, image_data, selection_data, relayout_data, mask_b64, pores_mask_b64, border_mask_b64):
+    """Fast toggle between image layers using cached masks while preserving drawn rectangles"""
     if image_data is None:
         return dash.no_update
     
@@ -956,92 +966,92 @@ def toggle_mask_view(show_mask, show_pores_enabled, show_border_enabled, image_d
         # Create figure with original image as base layer
         fig = create_image_figure(img_pil, title)
         
-        # Add red area of interest mask if requested and file exists
+        # Add red area of interest mask if requested and mask exists
         if show_mask and not show_pores_enabled and not show_border_enabled:
-            try:
-                import os
-                if os.path.exists("temp_mask.png"):
-                    # Load and create red overlay for area of interest
-                    mask = cv2.imread("temp_mask.png", cv2.IMREAD_GRAYSCALE)
-                    red_mask = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
-                    red_mask[mask == 255] = [255, 0, 0, 127]  # Red with 50% opacity
-                    red_mask_pil = Image.fromarray(red_mask, 'RGBA')
-                    
-                    fig.add_layout_image(
-                        dict(
-                            source=red_mask_pil,
-                            xref="x",
-                            yref="y", 
-                            x=0,
-                            y=0,
-                            sizex=img_pil.width,
-                            sizey=img_pil.height,
-                            sizing="stretch",
-                            opacity=1.0,
-                            layer="above"
+            if mask_b64:
+                try:
+                    # Decode mask from base64
+                    mask = decode_mask_from_base64(mask_b64)
+                    if mask is not None:
+                        red_mask = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
+                        red_mask[mask == 255] = [255, 0, 0, 127]  # Red with 50% opacity
+                        red_mask_pil = Image.fromarray(red_mask, 'RGBA')
+                        
+                        fig.add_layout_image(
+                            dict(
+                                source=red_mask_pil,
+                                xref="x",
+                                yref="y", 
+                                x=0,
+                                y=0,
+                                sizex=img_pil.width,
+                                sizey=img_pil.height,
+                                sizing="stretch",
+                                opacity=1.0,
+                                layer="above"
+                            )
                         )
-                    )
-                    title = "Area of Interest Mask (Red = Analysis Area)"
-            except Exception:
-                pass  # Ignore if mask file doesn't exist yet
+                        title = "Area of Interest Mask (Red = Analysis Area)"
+                except Exception:
+                    pass  # Ignore if mask decode fails
         
-        # Add blue pores mask if requested and file exists
+        # Add blue pores mask if requested and mask exists
         elif show_pores_enabled and not show_mask and not show_border_enabled:
-            try:
-                import os
-                if os.path.exists("temp_pores.png"):
-                    # Load and create bright blue overlay for pores
-                    pores_mask = cv2.imread("temp_pores.png", cv2.IMREAD_GRAYSCALE)
-                    blue_mask = np.zeros((pores_mask.shape[0], pores_mask.shape[1], 4), dtype=np.uint8)
-                    blue_mask[pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
-                    blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
-                    
-                    fig.add_layout_image(
-                        dict(
-                            source=blue_mask_pil,
-                            xref="x",
-                            yref="y",
-                            x=0,
-                            y=0,
-                            sizex=img_pil.width,
-                            sizey=img_pil.height,
-                            sizing="stretch",
-                            opacity=1.0,
-                            layer="above"
+            if pores_mask_b64:
+                try:
+                    # Decode pores mask from base64
+                    pores_mask = decode_mask_from_base64(pores_mask_b64)
+                    if pores_mask is not None:
+                        blue_mask = np.zeros((pores_mask.shape[0], pores_mask.shape[1], 4), dtype=np.uint8)
+                        blue_mask[pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
+                        blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
+                        
+                        fig.add_layout_image(
+                            dict(
+                                source=blue_mask_pil,
+                                xref="x",
+                                yref="y",
+                                x=0,
+                                y=0,
+                                sizex=img_pil.width,
+                                sizey=img_pil.height,
+                                sizing="stretch",
+                                opacity=1.0,
+                                layer="above"
+                            )
                         )
-                    )
-                    title = "Pores Mask (Bright Blue = Pores)"
-            except Exception:
-                pass  # Ignore if pores file doesn't exist yet
+                        title = "Pores Mask (Bright Blue = Pores)"
+                except Exception:
+                    pass  # Ignore if pores mask decode fails
         
-        # Add yellow border mask if requested and file exists
+        # Add yellow border mask if requested and mask exists
         elif show_border_enabled and not show_mask and not show_pores_enabled:
-            try:
-                import os
-                if os.path.exists("temp_border.png"):
-                    # Load and create yellow overlay for border
-                    border_mask = cv2.imread("temp_border.png", cv2.IMREAD_GRAYSCALE)
-                    yellow_mask = np.zeros((border_mask.shape[0], border_mask.shape[1], 4), dtype=np.uint8)
-                    yellow_mask[border_mask == 255] = [255, 255, 0, 160]  # Yellow with opacity
-                    yellow_mask_pil = Image.fromarray(yellow_mask, 'RGBA')
-                    
-                    fig.add_layout_image(
-                        dict(
-                            source=yellow_mask_pil,
-                            xref="x",
-                            yref="y",
-                            x=0,
-                            y=0,
-                            sizex=img_pil.width,
-                            sizey=img_pil.height,
-                            sizing="stretch",
-                            opacity=1.0,
-                            layer="above"
+            if border_mask_b64:
+                try:
+                    # Decode border mask from base64
+                    border_mask = decode_mask_from_base64(border_mask_b64)
+                    if border_mask is not None:
+                        yellow_mask = np.zeros((border_mask.shape[0], border_mask.shape[1], 4), dtype=np.uint8)
+                        yellow_mask[border_mask == 255] = [255, 255, 0, 160]  # Yellow with opacity
+                        yellow_mask_pil = Image.fromarray(yellow_mask, 'RGBA')
+                        
+                        fig.add_layout_image(
+                            dict(
+                                source=yellow_mask_pil,
+                                xref="x",
+                                yref="y",
+                                x=0,
+                                y=0,
+                                sizex=img_pil.width,
+                                sizey=img_pil.height,
+                                sizing="stretch",
+                                opacity=1.0,
+                                layer="above"
+                            )
                         )
-                    )
-                    title = "Border Mask (Yellow = Border Ring)"
-            except Exception:
-                pass  # Ignore if border file doesn't exist yet
+                        title = "Border Mask (Yellow = Border Ring)"
+                except Exception:
+                    pass  # Ignore if border mask decode fails
         
         # Configure layout 
         fig.update_layout(
@@ -1233,10 +1243,13 @@ def update_button_appearance(mask_active, pores_active, border_active):
     [State('image-store', 'data'),
      State('mask-toggle-store', 'data'),
      State('pores-toggle-store', 'data'),
-     State('border-toggle-store', 'data')],
+     State('border-toggle-store', 'data'),
+     State('mask-store', 'data'),
+     State('pores-mask-store', 'data'),
+     State('border-mask-store', 'data')],
     prevent_initial_call=True
 )
-def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_border):
+def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_border, mask_b64, pores_mask_b64, border_mask_b64):
     """Clear all drawn rectangles and region results"""
     if clear_clicks is None or image_data is None:
         return dash.no_update, dash.no_update, dash.no_update
@@ -1253,11 +1266,11 @@ def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_borde
         title = "Uploaded Image"
         
         # Add red area of interest mask if active
-        if show_mask:
+        if show_mask and mask_b64:
             try:
-                import os
-                if os.path.exists("temp_mask.png"):
-                    mask = cv2.imread("temp_mask.png", cv2.IMREAD_GRAYSCALE)
+                # Decode mask from base64
+                mask = decode_mask_from_base64(mask_b64)
+                if mask is not None:
                     red_mask = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
                     red_mask[mask == 255] = [255, 0, 0, 127]  # Red with 50% opacity
                     red_mask_pil = Image.fromarray(red_mask, 'RGBA')
@@ -1281,11 +1294,11 @@ def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_borde
                 pass
         
         # Add blue pores mask if active (mutually exclusive with other masks)
-        elif show_pores:
+        elif show_pores and pores_mask_b64:
             try:
-                import os
-                if os.path.exists("temp_pores.png"):
-                    pores_mask = cv2.imread("temp_pores.png", cv2.IMREAD_GRAYSCALE)
+                # Decode pores mask from base64
+                pores_mask = decode_mask_from_base64(pores_mask_b64)
+                if pores_mask is not None:
                     blue_mask = np.zeros((pores_mask.shape[0], pores_mask.shape[1], 4), dtype=np.uint8)
                     blue_mask[pores_mask == 255] = [0, 150, 255, 200]  # Brighter blue with higher opacity
                     blue_mask_pil = Image.fromarray(blue_mask, 'RGBA')
@@ -1309,11 +1322,11 @@ def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_borde
                 pass
         
         # Add yellow border mask if active (mutually exclusive with other masks)
-        elif show_border:
+        elif show_border and border_mask_b64:
             try:
-                import os
-                if os.path.exists("temp_border.png"):
-                    border_mask = cv2.imread("temp_border.png", cv2.IMREAD_GRAYSCALE)
+                # Decode border mask from base64
+                border_mask = decode_mask_from_base64(border_mask_b64)
+                if border_mask is not None:
                     yellow_mask = np.zeros((border_mask.shape[0], border_mask.shape[1], 4), dtype=np.uint8)
                     yellow_mask[border_mask == 255] = [255, 255, 0, 160]  # Yellow with opacity
                     yellow_mask_pil = Image.fromarray(yellow_mask, 'RGBA')

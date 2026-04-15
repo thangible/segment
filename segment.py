@@ -231,7 +231,7 @@ def calculate_porosity_from_images(original_img, mask, manual_threshold=0):
     return porosity, combined_mask, binary_img
 
 
-def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/200, close_kernel_ratio=1/200,
+def analyze_porosity(img_input, crop_legend_enabled=False, open_kernel_ratio=1/200, close_kernel_ratio=1/200,
                     manual_threshold=0, mask_threshold=0, use_area_of_interest=True, open_iterations=1, close_iterations=1, 
                     border_pixels=None, border_ratio=0.10, fast_mask_enabled=True, processing_size=512,
                     png_legend_ratio=1/45, bmp_legend_height=0.08, bmp_legend_height_value=200,
@@ -240,7 +240,7 @@ def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/20
     Analyze porosity from microscopy images
     
     Parameters:
-    - img_path: path to the image file
+    - img_input: path to the image file (string) or cv2 image array (numpy.ndarray)
     - crop_legend_enabled: whether to crop legend (default False)
     - open_kernel_ratio: ratio for morphological opening kernel size (default 1/200)
     - close_kernel_ratio: ratio for morphological closing kernel size (default 1/200)
@@ -270,8 +270,15 @@ def analyze_porosity(img_path, crop_legend_enabled=False, open_kernel_ratio=1/20
     - border_mask: border area mask
     """
     
-    # Read the image
-    og_img = cv2.imread(img_path)
+    # Handle input - either file path or cv2 image
+    if isinstance(img_input, str):
+        # Input is a file path
+        og_img = cv2.imread(img_input)
+        img_path = img_input  # Keep path for legend cropping logic
+    else:
+        # Input is a cv2 image array
+        og_img = img_input
+        img_path = "image.png"  # Default path for legend cropping logic
      
     # Convert to grayscale
     img = cv2.cvtColor(og_img, cv2.COLOR_BGR2GRAY)
