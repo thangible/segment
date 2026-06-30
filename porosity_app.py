@@ -61,32 +61,7 @@ app.layout = dbc.Container([
             
             # Control buttons section
             html.Div([
-                html.H5("Processing Options", className="mb-3"),
-                
-                # Checkbox for legend cropping
-                dbc.Checklist(
-                    options=[
-                        {"label": " Crop Legend", "value": "crop_legend"}
-                    ],
-                    value=[],  # Default: not checked
-                    id="crop-legend-checkbox",
-                    className="mb-3"
-                ),
-                
-                # Crop height input (only visible when crop legend is checked)
-                html.Div([
-                    html.Label("Crop Height (pixels from bottom)", className="form-label"),
-                    dbc.Input(
-                        id="crop-height-input",
-                        type="number",
-                        placeholder="e.g. 100",
-                        min=1,
-                        max=2000,
-                        value=None,
-                        className="mb-2"
-                    ),
-                    html.Small("Leave empty for automatic legend detection", className="form-text text-muted"),
-                ], id="crop-height-container", className="mb-3", style={"display": "none"}),
+                html.H5("Basic Settings", className="mb-3"),
                 
                 # Checkbox for fast mask processing
                 dbc.Checklist(
@@ -95,12 +70,21 @@ app.layout = dbc.Container([
                     ],
                     value=["fast_mask"],  # Default: checked
                     id="fast-mask-checkbox",
-                    className="mb-3"
+                    className="mb-2"
+                ),
+
+                # Advanced toggle for processing size
+                dbc.Checklist(
+                    options=[{"label": " Modify Processing Size", "value": "show_size"}],
+                    value=[],
+                    id="show-size-checkbox",
+                    className="mb-2 text-muted",
+                    style={"fontSize": "0.9em"}
                 ),
                 
-                # Processing size input
+                # Processing size input (hidden by default)
                 html.Div([
-                    html.Label("Processing Size (pixels for largest dimension)", className="form-label"),
+                    html.Label("Processing Size (pixels for largest dimension)", className="form-label", style={"fontSize": "0.9em"}),
                     dbc.Input(
                         id="processing-size-input",
                         type="number",
@@ -109,168 +93,210 @@ app.layout = dbc.Container([
                         max=2048,
                         step=64,
                         value=512,
-                        className="mb-2"
+                        className="mb-2",
+                        size="sm"
                     ),
                     html.Small("Smaller values = faster processing, larger values = better quality", className="form-text text-muted"),
-                ], className="mb-3"),
+                ], id="processing-size-container", className="mb-3", style={"display": "none", "marginLeft": "25px"}),
                 
-                # Open kernel ratio slider
+                html.Hr(),
+
+                # Advanced Options Toggle
+                dbc.Checklist(
+                    options=[{"label": " ⚙️ Show Advanced Options", "value": "show_advanced"}],
+                    value=[],
+                    id="advanced-options-checkbox",
+                    className="mb-3 fw-bold"
+                ),
+                
+                # Advanced Options Container (Hidden by Default)
                 html.Div([
-                    html.Label("Open Kernel Ratio (to image size)", className="form-label"),
-                    dcc.Slider(
-                        id="open-kernel-ratio-slider",
-                        min=0,
-                        max=5,
-                        step=1,
-                        value=1,  # Default to 1/200
-                        marks={
-                            0: "1/400",
-                            1: "1/200",
-                            2: "1/100", 
-                            3: "1/50",
-                            4: "1/25",
-                            5: "1/10"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
+                    html.Div([
+                        # Checkbox for legend cropping
+                        dbc.Checklist(
+                            options=[
+                                {"label": " Crop Legend", "value": "crop_legend"}
+                            ],
+                            value=[],  # Default: not checked
+                            id="crop-legend-checkbox",
+                            className="mb-3"
+                        ),
+                        
+                        # Crop height input (only visible when crop legend is checked)
+                        html.Div([
+                            html.Label("Crop Height (pixels from bottom)", className="form-label"),
+                            dbc.Input(
+                                id="crop-height-input",
+                                type="number",
+                                placeholder="e.g. 100",
+                                min=1,
+                                max=2000,
+                                value=None,
+                                className="mb-2"
+                            ),
+                            html.Small("Leave empty for automatic legend detection", className="form-text text-muted"),
+                        ], id="crop-height-container", className="mb-3", style={"display": "none"}),
+                        
+                        # Open kernel ratio slider
+                        html.Div([
+                            html.Label("Open Kernel Ratio (to image size)", className="form-label"),
+                            dcc.Slider(
+                                id="open-kernel-ratio-slider",
+                                min=0,
+                                max=5,
+                                step=1,
+                                value=1,  # Default to 1/200
+                                marks={
+                                    0: "1/400",
+                                    1: "1/200",
+                                    2: "1/100", 
+                                    3: "1/50",
+                                    4: "1/25",
+                                    5: "1/10"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Close kernel ratio slider
+                        html.Div([
+                            html.Label("Close Kernel Ratio (to image size)", className="form-label"),
+                            dcc.Slider(
+                                id="close-kernel-ratio-slider",
+                                min=0,
+                                max=5,
+                                step=1,
+                                value=1,  # Default to 1/200
+                                marks={
+                                    0: "1/400",
+                                    1: "1/200",
+                                    2: "1/100", 
+                                    3: "1/50",
+                                    4: "1/25",
+                                    5: "1/10"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Open iterations slider
+                        html.Div([
+                            html.Label("Open Iterations (0 = Skip)", className="form-label"),
+                            dcc.Slider(
+                                id="open-iterations-slider",
+                                min=0,
+                                max=5,
+                                step=1,
+                                value=1,  # Default to 1 iteration
+                                marks={
+                                    0: "0",
+                                    1: "1",
+                                    2: "2",
+                                    3: "3", 
+                                    4: "4",
+                                    5: "5"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Close iterations slider
+                        html.Div([
+                            html.Label("Close Iterations (0 = Skip)", className="form-label"),
+                            dcc.Slider(
+                                id="close-iterations-slider",
+                                min=0,
+                                max=5,
+                                step=1,
+                                value=1,  # Default to 1 iteration
+                                marks={
+                                    0: "0",
+                                    1: "1",
+                                    2: "2",
+                                    3: "3", 
+                                    4: "4",
+                                    5: "5"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Border pixels input
+                        html.Div([
+                            html.Label("Border Width (pixels, leave empty for ratio)", className="form-label"),
+                            dbc.Input(
+                                id="border-pixels-input",
+                                type="number",
+                                placeholder="e.g. 20",
+                                min=1,
+                                value=None,
+                                className="mb-2"
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Border ratio slider
+                        html.Div([
+                            html.Label("Border Ratio (% of area radius)", className="form-label"),
+                            dcc.Slider(
+                                id="border-ratio-slider",
+                                min=0,
+                                max=3,
+                                step=1,
+                                value=1,  # Default to 10%
+                                marks={
+                                    0: "5%",
+                                    1: "10%",
+                                    2: "15%",
+                                    3: "20%"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Threshold slider
+                        html.Div([
+                            html.Label("Pore Threshold (0 = Auto OTSU)", className="form-label"),
+                            dcc.Slider(
+                                id="threshold-slider",
+                                min=0,
+                                max=255,
+                                step=1,
+                                value=0,  # Default to OTSU
+                                marks={
+                                    0: "Auto",
+                                    64: "64",
+                                    128: "128", 
+                                    192: "192",
+                                    255: "255"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Mask Threshold slider
+                        html.Div([
+                            html.Label("Mask Threshold - Area of Interest (0 = Auto OTSU)", className="form-label"),
+                            dcc.Slider(
+                                id="mask-threshold-slider",
+                                min=0,
+                                max=255,
+                                step=1,
+                                value=0,  # Default to OTSU
+                                marks={
+                                    0: "Auto",
+                                    64: "64",
+                                    128: "128", 
+                                    192: "192",
+                                    255: "255"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": False}
+                            ),
+                        ], className="mb-3"),
+
+                    ], className="p-3 border rounded bg-light mb-4")
+                ], id="advanced-options-container", style={"display": "none"}),
                 
-                # Close kernel ratio slider
-                html.Div([
-                    html.Label("Close Kernel Ratio (to image size)", className="form-label"),
-                    dcc.Slider(
-                        id="close-kernel-ratio-slider",
-                        min=0,
-                        max=5,
-                        step=1,
-                        value=1,  # Default to 1/200
-                        marks={
-                            0: "1/400",
-                            1: "1/200",
-                            2: "1/100", 
-                            3: "1/50",
-                            4: "1/25",
-                            5: "1/10"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                # Open iterations slider
-                html.Div([
-                    html.Label("Open Iterations (0 = Skip)", className="form-label"),
-                    dcc.Slider(
-                        id="open-iterations-slider",
-                        min=0,
-                        max=5,
-                        step=1,
-                        value=1,  # Default to 1 iteration
-                        marks={
-                            0: "0",
-                            1: "1",
-                            2: "2",
-                            3: "3", 
-                            4: "4",
-                            5: "5"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                # Close iterations slider
-                html.Div([
-                    html.Label("Close Iterations (0 = Skip)", className="form-label"),
-                    dcc.Slider(
-                        id="close-iterations-slider",
-                        min=0,
-                        max=5,
-                        step=1,
-                        value=1,  # Default to 1 iteration
-                        marks={
-                            0: "0",
-                            1: "1",
-                            2: "2",
-                            3: "3", 
-                            4: "4",
-                            5: "5"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                # Border pixels input
-                html.Div([
-                    html.Label("Border Width (pixels, leave empty for ratio)", className="form-label"),
-                    dbc.Input(
-                        id="border-pixels-input",
-                        type="number",
-                        placeholder="e.g. 20",
-                        min=1,
-                        value=None,
-                        className="mb-2"
-                    ),
-                ], className="mb-3"),
-                
-                # Border ratio slider
-                html.Div([
-                    html.Label("Border Ratio (% of area radius)", className="form-label"),
-                    dcc.Slider(
-                        id="border-ratio-slider",
-                        min=0,
-                        max=3,
-                        step=1,
-                        value=1,  # Default to 10%
-                        marks={
-                            0: "5%",
-                            1: "10%",
-                            2: "15%",
-                            3: "20%"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                # Threshold slider
-                html.Div([
-                    html.Label("Pore Threshold (0 = Auto OTSU)", className="form-label"),
-                    dcc.Slider(
-                        id="threshold-slider",
-                        min=0,
-                        max=255,
-                        step=1,
-                        value=0,  # Default to OTSU
-                        marks={
-                            0: "Auto",
-                            64: "64",
-                            128: "128", 
-                            192: "192",
-                            255: "255"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                # Mask Threshold slider
-                html.Div([
-                    html.Label("Mask Threshold - Area of Interest (0 = Auto OTSU)", className="form-label"),
-                    dcc.Slider(
-                        id="mask-threshold-slider",
-                        min=0,
-                        max=255,
-                        step=1,
-                        value=0,  # Default to OTSU
-                        marks={
-                            0: "Auto",
-                            64: "64",
-                            128: "128", 
-                            192: "192",
-                            255: "255"
-                        },
-                        tooltip={"placement": "bottom", "always_visible": True}
-                    ),
-                ], className="mb-3"),
-                
-                html.H5("Analysis Options", className="mb-3"),
+                html.H5("Analysis Actions", className="mb-3 mt-2"),
                 dbc.Button("Calculate Full Image Porosity", 
                           id="btn-full-porosity", 
                           color="primary", 
@@ -287,20 +313,6 @@ app.layout = dbc.Container([
                 html.Div(id="calculating-indicator", className="mb-3"),
             ], className="mb-4"),
             
-            # # Instructions
-            # html.Div([
-            #     html.H5("Instructions", className="mb-2"),
-            #     html.P("1. Upload an image using the upload area above"),
-            #     html.P("2. Adjust processing options (legend cropping, kernel ratio, threshold)"),
-            #     html.P("3. Click 'Calculate Full Image Porosity' to analyze with current settings"),
-            #     html.P("4. Use red button (🔴) to toggle area of interest mask"),
-            #     html.P("5. Use blue button (🔵) to toggle pores visualization"),
-            #     html.P("6. Draw a rectangle on the image to select a region"),
-            #     html.P("7. Click 'Calculate Selected Region Porosity' to analyze the selected area"),
-            #     html.P("8. Use mouse wheel to zoom in/out on the image"),
-            #     html.P("9. Drawing a new region will clear mask visualizations"),
-            # ], className="alert alert-light"),
-            
         ], width=4, style={"height": "100vh", "overflow-y": "auto", "padding-right": "20px"}),
         
         # Right column - Image and Results
@@ -311,28 +323,28 @@ app.layout = dbc.Container([
             html.Div([
                 dbc.ButtonGroup([
                     dbc.Button(
-                        "🔴 Mask", 
+                        "👁 Mask", 
                         id="mask-toggle-btn",
                         color="secondary",
                         outline=True,
                         size="sm"
                     ),
                     dbc.Button(
-                        "🔵 Pores", 
+                        "👁 Pores", 
                         id="pores-toggle-btn",
                         color="secondary", 
                         outline=True,
                         size="sm"
                     ),
                     dbc.Button(
-                        "🟡 Border", 
+                        "👁 Border", 
                         id="border-toggle-btn",
                         color="secondary", 
                         outline=True,
                         size="sm"
                     ),
                     dbc.Button(
-                        "🗑️ Clear Areas", 
+                        "🧹 Clear Areas", 
                         id="clear-rectangles-btn",
                         color="warning",
                         outline=True,
@@ -599,9 +611,6 @@ def store_selection(relayoutData, current_selection):
     """Store selection data when user draws rectangle"""
     if relayoutData is None:
         return current_selection
-    
-    # Debug: print what we're getting
-    # print("relayoutData keys:", list(relayoutData.keys()) if relayoutData else None)
     
     # Only update for actual shape drawing events
     # Ignore pan/zoom events which have axis range changes
@@ -1366,6 +1375,30 @@ def clear_rectangles(clear_clicks, image_data, show_mask, show_pores, show_borde
 def toggle_crop_height_input(crop_legend_value):
     """Show/hide crop height input based on legend cropping checkbox"""
     if crop_legend_value and "crop_legend" in crop_legend_value:
+        return {"display": "block"}
+    else:
+        return {"display": "none"}
+
+# --- NEW CALLBACKS FOR UI TOGGLING ---
+
+@app.callback(
+    Output("processing-size-container", "style"),
+    [Input("show-size-checkbox", "value")]
+)
+def toggle_processing_size_input(show_size_value):
+    """Show/hide processing size input based on its toggle checkbox"""
+    if show_size_value and "show_size" in show_size_value:
+        return {"display": "block", "marginLeft": "25px"}
+    else:
+        return {"display": "none", "marginLeft": "25px"}
+
+@app.callback(
+    Output("advanced-options-container", "style"),
+    [Input("advanced-options-checkbox", "value")]
+)
+def toggle_advanced_options(advanced_value):
+    """Show/hide the entire advanced options block based on its toggle checkbox"""
+    if advanced_value and "show_advanced" in advanced_value:
         return {"display": "block"}
     else:
         return {"display": "none"}
