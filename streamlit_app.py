@@ -239,14 +239,15 @@ def main():
             if st.session_state.mask is not None:
                 st.info("Draw rectangles on the mask to erase regions. Click 'Erase Selection' to apply. Erased regions remain across calculations until reset.")
                 
-                # FIX: Use Numpy matrix blending instead of Pillow alpha_composite.
-                # st_canvas reliably loads standard RGB arrays on remount.
                 blended_arr = img_rgb.copy().astype(np.float32)
                 active_mask = st.session_state.mask == 255
                 
-                # Apply a 50% red tint to the active mask areas
                 blended_arr[active_mask] = blended_arr[active_mask] * 0.5 + np.array([255, 0, 0]) * 0.5
-                mask_bg = Image.fromarray(blended_arr.astype(np.uint8))
+                
+                # ADD PADDING: Create a 150-pixel dark gray buffer around the image
+                PAD = 150
+                padded_arr = np.pad(blended_arr, ((PAD, PAD), (PAD, PAD), (0, 0)), mode='constant', constant_values=40)
+                mask_bg = Image.fromarray(padded_arr.astype(np.uint8))
                 
                 if mask_bg.width > MAX_CANVAS_WIDTH:
                     scale_factor_mask = mask_bg.width / MAX_CANVAS_WIDTH
@@ -275,15 +276,33 @@ def main():
                 
                 if col_c.button("Erase Selection"):
                     if canvas_mask.json_data is not None and len(canvas_mask.json_data["objects"]) > 0:
+                        img_h, img_w = st.session_state.mask.shape
                         
                         for shape in canvas_mask.json_data["objects"]:
-                            x0 = int(shape["left"] * scale_factor_mask)
-                            y0 = int(shape["top"] * scale_factor_mask)
-                            w = int(shape["width"] * scale_factor_mask)
-                            h = int(shape["height"] * scale_factor_mask)
+                            # Scale coordinates back up to the high-res padded image size
+                            x0_padded = int(shape["left"] * scale_factor_mask)
+                            y0_padded = int(shape["top"] * scale_factor_mask)
+                            w_padded = int(shape["width"] * scale_factor_mask)
+                            h_padded = int(shape["height"] * scale_factor_mask)
                             
-                            st.session_state.erased_boxes.append({'x': x0, 'y': y0, 'w': w, 'h': h})
-                            st.session_state.mask[y0:y0+h, x0:x0+w] = 0
+                            # Subtract padding to map back to the real image coordinates
+                            x0 = x0_padded - PAD
+                            y0 = y0_padded - PAD
+                            x1 = x0 + w_padded
+                            y1 = y0 + h_padded
+                            
+                            # Clamp values so they strictly stay within the real image bounds
+                            x0 = max(0, min(x0, img_w))
+                            y0 = max(0, min(y0, img_h))
+                            x1 = max(0, min(x1, img_w))
+                            y1 = max(0, min(y1, img_h))
+                            
+                            # Apply erasure only if the box intersects the real image area
+                            if x1 > x0 and y1 > y0:
+                                w_real = x1 - x0
+                                h_real = y1 - y0
+                                st.session_state.erased_boxes.append({'x': x0, 'y': y0, 'w': w_real, 'h': h_real})
+                                st.session_state.mask[y0:y1, x0:x1] = 0
                         
                         inverse_binary = cv2.bitwise_not(st.session_state.binary_img)
                         st.session_state.pores_mask = cv2.bitwise_and(inverse_binary, st.session_state.mask)
