@@ -172,15 +172,19 @@ def main():
             if st.session_state.grain_overlay is not None:
                 c3.success(st.session_state.grain_result)
 
-        # Tabs for different visualization layers
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Original / Draw", "Area Mask", "Pores", "Border", "Grain Grid"])
+        # FIX: Use a radio button instead of tabs to ensure the canvas renders correctly
+        view_selection = st.radio(
+            "Select View",
+            ["Original / Draw", "Area Mask", "Pores", "Border", "Grain Grid"],
+            horizontal=True
+        )
         
         img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
         
         MAX_CANVAS_WIDTH = 1000  # Sets maximum width for both visual canvases
         
-        with tab1:
+        if view_selection == "Original / Draw":
             st.info("Draw rectangles on the image below to outline specific regions. Then use the buttons below the image to process your selection.")
             
             if pil_img.width > MAX_CANVAS_WIDTH:
@@ -231,15 +235,18 @@ def main():
                 else:
                     st.warning("Please draw a rectangle first.")
 
-        with tab2:
+        elif view_selection == "Area Mask":
             if st.session_state.mask is not None:
                 st.info("Draw rectangles on the mask to erase regions. Click 'Erase Selection' to apply. Erased regions remain across calculations until reset.")
                 
-                red_mask = np.zeros((*st.session_state.mask.shape, 4), dtype=np.uint8)
-                red_mask[st.session_state.mask == 255] = [255, 0, 0, 127]
-                mask_bg = Image.alpha_composite(pil_img.convert("RGBA"), Image.fromarray(red_mask))
+                # FIX: Use Numpy matrix blending instead of Pillow alpha_composite.
+                # st_canvas reliably loads standard RGB arrays on remount.
+                blended_arr = img_rgb.copy().astype(np.float32)
+                active_mask = st.session_state.mask == 255
                 
-                mask_bg = mask_bg.convert("RGB")
+                # Apply a 50% red tint to the active mask areas
+                blended_arr[active_mask] = blended_arr[active_mask] * 0.5 + np.array([255, 0, 0]) * 0.5
+                mask_bg = Image.fromarray(blended_arr.astype(np.uint8))
                 
                 if mask_bg.width > MAX_CANVAS_WIDTH:
                     scale_factor_mask = mask_bg.width / MAX_CANVAS_WIDTH
@@ -295,23 +302,46 @@ def main():
             else:
                 st.info("Upload an image to process the mask.")
 
-        with tab3:
+        elif view_selection == "Pores":
             if st.session_state.pores_mask is not None:
-                blue_mask = np.zeros((*st.session_state.pores_mask.shape, 4), dtype=np.uint8)
-                blue_mask[st.session_state.pores_mask == 255] = [0, 150, 255, 200]
-                st.image(Image.alpha_composite(pil_img.convert("RGBA"), Image.fromarray(blue_mask)), use_column_width=True)
+                # Numpy blending for Pores (Blue tint)
+                blended_arr = img_rgb.copy().astype(np.float32)
+                active_mask = st.session_state.pores_mask == 255
+                
+                # Blend: 40% original image + 60% blue
+                blended_arr[active_mask] = blended_arr[active_mask] * 0.4 + np.array([0, 150, 255]) * 0.6
+                
+                st.image(blended_arr.astype(np.uint8), use_column_width=True)
 
-        with tab4:
+        elif view_selection == "Border":
             if st.session_state.border_mask is not None:
-                yellow_mask = np.zeros((*st.session_state.border_mask.shape, 4), dtype=np.uint8)
-                yellow_mask[st.session_state.border_mask == 255] = [255, 255, 0, 160]
-                st.image(Image.alpha_composite(pil_img.convert("RGBA"), Image.fromarray(yellow_mask)), use_column_width=True)
+                # Numpy blending for Border (Yellow tint)
+                blended_arr = img_rgb.copy().astype(np.float32)
+                active_mask = st.session_state.border_mask == 255
+                
+                # Blend: 40% original image + 60% yellow
+                blended_arr[active_mask] = blended_arr[active_mask] * 0.4 + np.array([255, 255, 0]) * 0.6
+                
+                st.image(blended_arr.astype(np.uint8), use_column_width=True)
 
-        with tab5:
+        elif view_selection == "Grain Grid":
             if st.session_state.grain_overlay is not None:  
-                st.image(Image.alpha_composite(pil_img.convert("RGBA"), Image.fromarray(st.session_state.grain_overlay)), use_column_width=True)
-    else:
-        st.info("Upload an image to begin analysis.")
-
+                # Numpy blending for Grain Grid (Complex RGBA overlay)
+                blended_arr = img_rgb.copy().astype(np.float32)
+                overlay_rgba = st.session_state.grain_overlay
+                
+                # Extract alpha channel and normalize to 0.0 - 1.0
+                alpha = overlay_rgba[:, :, 3] / 255.0
+                
+                # Create a 3-channel alpha mask for matrix multiplication
+                alpha_rgb = np.stack([alpha, alpha, alpha], axis=-1)
+                
+                # Extract just the RGB colors from the overlay
+                overlay_rgb = overlay_rgba[:, :, :3].astype(np.float32)
+                
+                # Standard mathematical alpha blending: (background * (1 - alpha)) + (foreground * alpha)
+                blended_arr = (blended_arr * (1 - alpha_rgb)) + (overlay_rgb * alpha_rgb)
+                
+                st.image(blended_arr.astype(np.uint8), use_column_width=True)
 if __name__ == "__main__":
     main()
