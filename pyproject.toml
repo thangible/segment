@@ -1,9 +1,9 @@
-  [project]
-  name = "code"
-  version = "0.1.0"
-  description = "Venv for embedding and clustering"
-  readme = "README.md"
-  requires-python = ">=3.13, <3.14"
+[project]
+name = "code"
+version = "0.1.0"
+description = "Venv for embedding and clustering"
+readme = "README.md"
+requires-python = ">=3.12, <3.13"  
   dependencies = [
       "configargparse>=1.7.1",
       "gputil>=1.4.0",
@@ -20,24 +20,8 @@
       "dash-bootstrap-components",
       "plotly",
       "streamlit==1.40.0",
-    "streamlit-drawable-canvas>=0.9.3"
-  ]
+      "streamlit-drawable-canvas>=0.9.3",
+      "torch<=2.2.2",
+      "pytesseract>=0.3.13",
+]
 
-  [[tool.uv.index]]
-  name = "pytorch-cu128"
-  url = "https://download.pytorch.org/whl/cu128"
-  explicit = true
-
-  [tool.uv.sources]
-  torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-  ]
-
-  torchvision = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-  ]
-
-  [dependency-groups]
-  dev = [
-      "ipykernel>=6.30.1",
-  ]
