@@ -59,19 +59,43 @@ def run_ocr_zoom_detection(original_img):
 
     st.session_state.zoom_factor_input = st.session_state.detected_zoom
 
+# Simplified stand-in for the Advanced Options open/close kernel ratio + iteration sliders:
+# how large a dark region can be before it's still folded into the sample's
+# area-of-interest mask. Picking a preset here writes directly into the same
+# open_idx/close_idx/open_iters/close_iters session_state keys the Advanced Options
+# sliders use, so adjusting those sliders afterward naturally overrides the preset --
+# there's a single source of truth, whichever was set most recently.
+HOLE_SIZE_LABELS = ["Small Pores", "Medium", "Large", "Big Pores"]
+HOLE_SIZE_PRESETS = {
+    "Small Pores": {"open_idx": 1, "close_idx": 0, "open_iters": 1, "close_iters": 1},
+    "Medium":      {"open_idx": 1, "close_idx": 1, "open_iters": 1, "close_iters": 1},
+    "Large":       {"open_idx": 1, "close_idx": 2, "open_iters": 1, "close_iters": 1},
+    "Big Pores":   {"open_idx": 1, "close_idx": 3, "open_iters": 1, "close_iters": 1},
+}
+
+def apply_pore_size_preset():
+    """on_change callback for the Mask Setting panel's Pore Size slider."""
+    preset = HOLE_SIZE_PRESETS[st.session_state.hole_size]
+    st.session_state.open_idx = preset['open_idx']
+    st.session_state.close_idx = preset['close_idx']
+    st.session_state.open_iters = preset['open_iters']
+    st.session_state.close_iters = preset['close_iters']
+
 # Default values for every user-adjustable setting. Used both to seed
 # session state and to back the "Reset Default Parameters" button.
 PARAM_DEFAULTS = {
+    'sample_type': 'Ungeätzt',
     'enable_ocr': False,
     'fast_mask': True,
-    'modify_size': False,
     'processing_size': 512,
+    'zoom_factor_input': 5000,
+    'adjust_pore_size': False,
+    'hole_size': 'Small Pores',
     'crop_legend': False,
     'crop_height': 100,
-    'zoom_factor_input': 5000,
     'grain_lines': 5,
     'open_idx': 1,
-    'close_idx': 1,
+    'close_idx': 0,
     'open_iters': 1,
     'close_iters': 1,
     'border_pixels': 0,
@@ -145,9 +169,10 @@ def main():
             st.session_state.erased_boxes = []
             st.session_state.needs_calc = True
             st.session_state.ocr_done_for_current_image = False
-            st.session_state.detected_zoom = 5000
-            st.session_state.zoom_factor_input = 5000
             st.session_state.zoom_notification = None
+            # zoom_factor_input is deliberately NOT reset here -- it should carry over
+            # from the previous image (most batches share the same scale/zoom) unless
+            # OCR is enabled and detects a different value for this specific image.
 
         # Run OCR scale detection once per image, whenever it's enabled. This must
         # happen here, before the sidebar widgets render below, so that a freshly
@@ -164,44 +189,110 @@ def main():
     # ==========================
     if uploaded_file is not None:
         with st.sidebar:
+            st.radio(
+                "Sample Type",
+                options=["Ungeätzt", "Geätzt"],
+                key="sample_type",
+                help="Ungeätzt (unetched): porosity analysis only. Geätzt (etched): grain boundaries are visible, so grain size is measured too."
+            )
+
             st.subheader("Basic Settings")
             st.checkbox(
                 "Auto-detect Scale (OCR)",
                 key="enable_ocr",
                 help="Uses Tesseract OCR to read the µm scale from the bottom of newly uploaded images. Requires Tesseract to be installed on this machine."
             )
-            fast_mask = st.checkbox("Fast Mask Processing", key="fast_mask")
-            modify_size = st.checkbox("Modify Processing Size", key="modify_size")
-            processing_size = st.number_input("Processing Size (px)", min_value=128, max_value=2048, step=64, key="processing_size") if modify_size else 512
+            fast_mask = st.checkbox(
+                "Fast Mask Processing",
+                key="fast_mask",
+                help="Downsizes the image before detecting the sample boundary, for speed. Turn off to classify the boundary at full resolution instead."
+            )
+            if fast_mask:
+                processing_size = st.number_input(
+                    "Processing Size (px)", min_value=128, max_value=2048, step=64, key="processing_size",
+                    help="The image is downsized so its largest side is at most this many pixels before detecting the sample boundary. Higher = more precise but slower."
+                )
+            else:
+                processing_size = st.session_state.processing_size
+            zoom_factor = st.number_input(
+                "Zoom Factor (µm)", step=10, key="zoom_factor_input",
+                help="The real-world width of the image in micrometers, used to convert pixel measurements into grain size (µm). Auto-filled by OCR if enabled above."
+            )
 
-            with st.expander("Show Advanced Options"):
-                crop_legend = st.checkbox("Crop Legend", key="crop_legend")
-                crop_height = st.number_input("Crop Height (px from bottom)", min_value=1, key="crop_height") if crop_legend else None
+            st.subheader("Mask Setting")
+            st.checkbox(
+                "Adjust Pore Size",
+                key="adjust_pore_size",
+                help="Lets you tune how large a dark region can be before it's still folded into the sample area, instead of using the default."
+            )
+            if st.session_state.adjust_pore_size:
+                st.select_slider(
+                    "Pore Size", options=HOLE_SIZE_LABELS, key="hole_size", on_change=apply_pore_size_preset,
+                    help="Small Pores only folds tiny specks into the sample area; Big Pores tolerates larger dark regions as part of the sample boundary. Adjusting Close/Open Kernel Ratio directly in Advanced Options below overrides this preset."
+                )
+            crop_legend = st.checkbox(
+                "Crop Legend",
+                key="crop_legend",
+                help="Blacks out a strip at the bottom of the image (e.g. a scale bar or legend) before analysis, so it isn't mistaken for sample or pore area."
+            )
+            crop_height = st.number_input(
+                "Crop Height (px from bottom)", min_value=1, key="crop_height",
+                help="How many pixels tall the cropped-out strip is, measured up from the bottom of the image."
+            ) if crop_legend else None
 
-                st.markdown("**Grain Size Parameters**")
-                zoom_factor = st.number_input("Image Width (µm) for Scale", step=10, key="zoom_factor_input")
-                grain_lines = st.slider("Grain Size Grid Lines (H & V)", min_value=1, max_value=20, key="grain_lines")
-
-                st.markdown("**Morphology Parameters**")
+            with st.expander("Porosity Setting"):
+                st.markdown("**Morphology Setting** (overrides the Mask Setting panel's Pore Size preset)")
                 kernel_options = {0: 1/400, 1: 1/200, 2: 1/100, 3: 1/50, 4: 1/25, 5: 1/10}
-                open_idx = st.slider("Open Kernel Ratio (0-5)", 0, 5, key="open_idx")
-                close_idx = st.slider("Close Kernel Ratio (0-5)", 0, 5, key="close_idx")
-                open_iters = st.slider("Open Iterations", 0, 5, key="open_iters")
-                close_iters = st.slider("Close Iterations", 0, 5, key="close_iters")
+                open_idx = st.slider(
+                    "Open Kernel Ratio (0-5)", 0, 5, key="open_idx",
+                    help="Removes small noise specks from the sample boundary mask. Higher = removes larger specks, but can erode real detail."
+                )
+                close_idx = st.slider(
+                    "Close Kernel Ratio (0-5)", 0, 5, key="close_idx",
+                    help="How large a dark region can be before it's still folded into the sample area mask. Higher = tolerates bigger dark regions as part of the sample."
+                )
+                open_iters = st.slider(
+                    "Open Iterations", 0, 5, key="open_iters",
+                    help="How many times the noise-removal (open) step repeats. Higher = more aggressive cleanup."
+                )
+                close_iters = st.slider(
+                    "Close Iterations", 0, 5, key="close_iters",
+                    help="How many times the hole-filling (close) step repeats. Higher = more aggressive filling."
+                )
 
-                border_pixels = st.number_input("Border Width (px)", min_value=0, key="border_pixels")
+                st.markdown("**Border Porosity Setting**")
+                border_pixels = st.number_input(
+                    "Border Width (px)", min_value=0, key="border_pixels",
+                    help="Fixed border thickness, in pixels, used for the Border Porosity measurement. Leave at 0 to use Border Ratio Level instead."
+                )
                 border_pixels = border_pixels if border_pixels > 0 else None
 
                 border_ratios = {0: 0.05, 1: 0.10, 2: 0.15, 3: 0.20}
-                border_ratio_idx = st.slider("Border Ratio Level (0-3)", 0, 3, key="border_ratio_idx")
+                border_ratio_idx = st.slider(
+                    "Border Ratio Level (0-3)", 0, 3, key="border_ratio_idx",
+                    help="Only used when Border Width is 0. Sets the border ring's thickness as a percentage of the sample's estimated radius -- higher levels use a thicker ring."
+                )
 
-                threshold = st.slider("Threshold (0 = Auto)", 0, 255, key="threshold")
-                mask_threshold = st.slider("Mask Threshold (0 = Auto)", 0, 255, key="mask_threshold")
+                st.markdown("**Threshold Setting**")
+                threshold = st.slider(
+                    "Threshold (0 = Auto)", 0, 255, key="threshold",
+                    help="Manual brightness cutoff (0-255) used to separate pores from solid material. 0 lets the app choose automatically (Otsu's method)."
+                )
+                mask_threshold = st.slider(
+                    "Mask Threshold (0 = Auto)", 0, 255, key="mask_threshold",
+                    help="Manual brightness cutoff (0-255) used to detect the sample's outer boundary (area of interest). 0 lets the app choose automatically (Otsu's method)."
+                )
+
+            if st.session_state.sample_type == "Geätzt":
+                with st.expander("Grain Size Calculation"):
+                    grain_lines = st.slider(
+                        "Grain Size Grid Lines (H & V)", min_value=1, max_value=20, key="grain_lines",
+                        help="Number of horizontal and vertical test lines used to measure grain size via the line-intercept method. More lines sample more of the image but take longer."
+                    )
+            else:
+                grain_lines = st.session_state.grain_lines
 
             st.subheader("Analysis Actions")
-            if st.button("recalculate", type="primary", use_container_width=True):
-                st.session_state.needs_calc = True
-
             has_param_changes = any(
                 st.session_state[key] != default for key, default in PARAM_DEFAULTS.items()
             )
@@ -212,6 +303,8 @@ def main():
             ):
                 st.session_state.pending_reset = True
                 st.rerun()
+            if st.button("recalculate", type="primary", use_container_width=True):
+                st.session_state.needs_calc = True
 
     # ==========================
     # 3. MAIN CONTENT AREA (Calculations & Results)
@@ -256,15 +349,21 @@ def main():
                     b_pore_area = np.count_nonzero(b_combined == 255)
                     b_porosity = (b_pore_area * 100 / b_area) if b_area > 0 else 0
                 
-                intersections, mean_intercept_px, overlay = calculate_grain_size(
-                    img_cv, 
-                    mask, 
-                    grain_lines, 
-                    threshold
-                )
-                
-                pixel_size_um = zoom_factor / img_cv.shape[1]
-                mean_intercept_um = mean_intercept_px * pixel_size_um
+                if st.session_state.sample_type == "Geätzt":
+                    intersections, mean_intercept_px, overlay = calculate_grain_size(
+                        img_cv,
+                        mask,
+                        grain_lines,
+                        threshold
+                    )
+                    pixel_size_um = zoom_factor / img_cv.shape[1]
+                    st.session_state.grain_size_um = mean_intercept_px * pixel_size_um
+                    st.session_state.grain_intersections = intersections
+                    st.session_state.grain_overlay = overlay
+                else:
+                    st.session_state.grain_size_um = None
+                    st.session_state.grain_intersections = None
+                    st.session_state.grain_overlay = None
 
                 st.session_state.mask = mask
                 st.session_state.pores_mask = combined
@@ -272,9 +371,6 @@ def main():
                 st.session_state.binary_img = binary
                 st.session_state.full_porosity = porosity
                 st.session_state.border_porosity = b_porosity
-                st.session_state.grain_size_um = mean_intercept_um
-                st.session_state.grain_intersections = intersections
-                st.session_state.grain_overlay = overlay
                 st.session_state.needs_calc = False
                 # Removed the st.rerun() here entirely!
 
@@ -298,11 +394,10 @@ def main():
         # ==========================
         # 4. VISUALIZER RENDERING
         # ==========================
-        view_selection = st.radio(
-            "Select View",
-            ["Original / Draw", "Area Mask", "Pores", "Border", "Grain Grid"],
-            horizontal=True
-        )
+        view_options = ["Original / Draw", "Area Mask", "Pores", "Border"]
+        if st.session_state.sample_type == "Geätzt":
+            view_options.append("Grain Grid")
+        view_selection = st.radio("Select View", view_options, horizontal=True)
         
         img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
