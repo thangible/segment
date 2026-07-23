@@ -30,30 +30,52 @@ def crop_legend(img, img_path, png_legend_ratio=1/45,
     return cropped_img
 
 
-def select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio=1/200, close_kernel_ratio=1/200, open_iterations=1, close_iterations=1, processing_size=512):
+def select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio=1/200, close_kernel_ratio=1/200,
+                             open_iterations=1, close_iterations=1, processing_size=512, threshold_at_full_res=True):
     """
-    Select area of interest using morphological operations with image resizing for speed optimization
+    Select area of interest using morphological operations, with image resizing for speed.
+
+    Morphological cleanup (the expensive, sensitive step) always runs on a copy capped at
+    `processing_size`, regardless of `threshold_at_full_res`. Running it at raw, uncapped
+    resolution lets real image noise/texture erode the mask catastrophically: true
+    morphological erosion is a much harsher operation than the smoothing implied by
+    resizing, so the same nominal kernel ratio that merely shrinks a downsized mask can
+    wipe out a full-resolution one entirely.
+
+    `threshold_at_full_res` only controls the initial pixel classification: True computes
+    the Otsu/manual threshold on the full-resolution image (more precise, "accurate" mode);
+    False computes it on the already-downsized copy (faster, slightly coarser, "fast" mode).
     """
     original_height, original_width = processed_img.shape[:2]
     max_dimension = max(original_height, original_width)
-    
-    if max_dimension > processing_size:
+    needs_resize = max_dimension > processing_size
+
+    if needs_resize:
         resize_factor = processing_size / max_dimension
         new_width = int(original_width * resize_factor)
         new_height = int(original_height * resize_factor)
-        resized_img = cv2.resize(processed_img, (new_width, new_height), interpolation=cv2.INTER_AREA)
     else:
-        resized_img = processed_img
         resize_factor = 1.0
         new_width, new_height = original_width, original_height
-    
-    if mask_threshold > 0:
-        _, binary_img = cv2.threshold(resized_img, mask_threshold, 255, cv2.THRESH_BINARY)
+
+    if threshold_at_full_res:
+        if mask_threshold > 0:
+            _, full_res_mask = cv2.threshold(processed_img, mask_threshold, 255, cv2.THRESH_BINARY)
+        else:
+            _, full_res_mask = cv2.threshold(processed_img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+        if needs_resize:
+            mask = cv2.resize(full_res_mask, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        else:
+            mask = full_res_mask
     else:
-        _, binary_img = cv2.threshold(resized_img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    
-    mask = binary_img.copy()
-    
+        resized_img = cv2.resize(processed_img, (new_width, new_height), interpolation=cv2.INTER_AREA) if needs_resize else processed_img
+        if mask_threshold > 0:
+            _, mask = cv2.threshold(resized_img, mask_threshold, 255, cv2.THRESH_BINARY)
+        else:
+            _, mask = cv2.threshold(resized_img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
     if open_iterations > 0:
         open_kernel_size = max(1, int(new_height * open_kernel_ratio))
         open_kernel = np.ones((open_kernel_size, open_kernel_size), np.uint8)
@@ -150,10 +172,11 @@ def analyze_porosity(img_input, crop_legend_enabled=False, open_kernel_ratio=1/2
         processed_img = img
     
     if use_area_of_interest:
-        if fast_mask_enabled:
-            mask = select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio, close_kernel_ratio, open_iterations, close_iterations, processing_size)
-        else:
-            mask = select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio, close_kernel_ratio, open_iterations, close_iterations, processing_size=max(processed_img.shape))
+        mask = select_area_of_interest(
+            processed_img, mask_threshold, open_kernel_ratio, close_kernel_ratio,
+            open_iterations, close_iterations, processing_size=processing_size,
+            threshold_at_full_res=not fast_mask_enabled,
+        )
     else:
         mask = np.ones_like(processed_img) * 255
     

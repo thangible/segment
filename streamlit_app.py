@@ -5,11 +5,80 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 import pytesseract
 import re
+import shutil
+import os
+
+if shutil.which("tesseract") is None:
+    _candidate_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract",
+    ]
+    for _path in _candidate_paths:
+        if os.path.isfile(_path):
+            pytesseract.pytesseract.tesseract_cmd = _path
+            break
 
 # Import your existing backend logic
 from segment import analyze_porosity, calculate_grain_size, select_border_of_interest
 
 st.set_page_config(page_title="Porosity & Grain Analysis", layout="wide")
+
+def run_ocr_zoom_detection(original_img):
+    """Scan the bottom 20% of the image for a µm scale value via Tesseract OCR.
+    Updates detected_zoom, zoom_notification, and the zoom_factor_input widget value.
+    """
+    height, width = original_img.shape[:2]
+    bottom_20 = original_img[int(height * 0.8):height, 0:width]
+
+    try:
+        gray_bottom = cv2.cvtColor(bottom_20, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray_bottom, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        text = pytesseract.image_to_string(thresh)
+        numbers = re.findall(r'\b\d+\b', text)
+
+        if numbers:
+            st.session_state.detected_zoom = int(numbers[-1])
+            st.session_state.zoom_notification = {
+                "type": "success",
+                "msg": f"✅ **Scale Detected:** Tesseract OCR successfully scanned the bottom 20% of the image and found a zoom factor of **{st.session_state.detected_zoom} µm**. The scale has been automatically updated in the sidebar."
+            }
+        else:
+            st.session_state.detected_zoom = 5000
+            st.session_state.zoom_notification = {
+                "type": "warning",
+                "msg": "⚠️ **Scale Not Found:** Tesseract OCR scanned the bottom of the image but could not detect any numbers. The zoom factor has been set to the default **5000 µm**."
+            }
+    except Exception:
+        st.session_state.detected_zoom = 5000
+        st.session_state.zoom_notification = {
+            "type": "error",
+            "msg": "❌ **OCR Error:** Tesseract OCR failed to run or is not properly configured on your system. Defaulting to **5000 µm**."
+        }
+
+    st.session_state.zoom_factor_input = st.session_state.detected_zoom
+
+# Default values for every user-adjustable setting. Used both to seed
+# session state and to back the "Reset Default Parameters" button.
+PARAM_DEFAULTS = {
+    'enable_ocr': False,
+    'fast_mask': True,
+    'modify_size': False,
+    'processing_size': 512,
+    'crop_legend': False,
+    'crop_height': 100,
+    'zoom_factor_input': 5000,
+    'grain_lines': 5,
+    'open_idx': 1,
+    'close_idx': 1,
+    'open_iters': 1,
+    'close_iters': 1,
+    'border_pixels': 0,
+    'border_ratio_idx': 1,
+    'threshold': 0,
+    'mask_threshold': 0,
+}
 
 def init_session_state():
     """Initialize session state variables to store images and results in memory."""
@@ -27,10 +96,13 @@ def init_session_state():
         'erased_boxes': [],
         'last_uploaded_name': None,
         'needs_calc': False,
-        'detected_zoom': 5000, 
+        'detected_zoom': 5000,
         'zoom_notification': None,
-        'current_canvas_bg': None, 
-        'current_mask_bg': None
+        'ocr_done_for_current_image': False,
+        'pending_reset': False,
+        'current_canvas_bg': None,
+        'current_mask_bg': None,
+        **PARAM_DEFAULTS,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -38,7 +110,19 @@ def init_session_state():
 
 def main():
     init_session_state()
-    
+
+    # Apply a pending "Reset Default Parameters" click here, before any of the
+    # affected widgets render below -- writing to their session_state keys
+    # after they've already rendered this run raises a StreamlitAPIException.
+    if st.session_state.pending_reset:
+        for key, val in PARAM_DEFAULTS.items():
+            st.session_state[key] = val
+        st.session_state.detected_zoom = PARAM_DEFAULTS['zoom_factor_input']
+        st.session_state.zoom_notification = None
+        st.session_state.ocr_done_for_current_image = False
+        st.session_state.pending_reset = False
+        st.session_state.needs_calc = True
+
     st.title("Porosity & Grain Analysis Tool")
     st.markdown("---")
     
@@ -58,37 +142,22 @@ def main():
             original_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
             st.session_state.original_img = original_img
             st.session_state.last_uploaded_name = uploaded_file.name
-            st.session_state.erased_boxes = [] 
+            st.session_state.erased_boxes = []
             st.session_state.needs_calc = True
-            
-            # --- OCR ZOOM DETECTION LOGIC ---
-            height, width = original_img.shape[:2]
-            bottom_20 = original_img[int(height * 0.8):height, 0:width]
-            
-            try:
-                gray_bottom = cv2.cvtColor(bottom_20, cv2.COLOR_BGR2GRAY)
-                _, thresh = cv2.threshold(gray_bottom, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                text = pytesseract.image_to_string(thresh)
-                numbers = re.findall(r'\b\d+\b', text)
-                
-                if numbers:
-                    st.session_state.detected_zoom = int(numbers[-1])
-                    st.session_state.zoom_notification = {
-                        "type": "success", 
-                        "msg": f"✅ **Scale Detected:** Tesseract OCR successfully scanned the bottom 20% of the image and found a zoom factor of **{st.session_state.detected_zoom} µm**. The scale has been automatically updated in the sidebar."
-                    }
-                else:
-                    st.session_state.detected_zoom = 5000
-                    st.session_state.zoom_notification = {
-                        "type": "warning", 
-                        "msg": "⚠️ **Scale Not Found:** Tesseract OCR scanned the bottom of the image but could not detect any numbers. The zoom factor has been set to the default **5000 µm**."
-                    }
-            except Exception as e:
-                st.session_state.detected_zoom = 5000
-                st.session_state.zoom_notification = {
-                    "type": "error", 
-                    "msg": "❌ **OCR Error:** Tesseract OCR failed to run or is not properly configured on your system. Defaulting to **5000 µm**."
-                }
+            st.session_state.ocr_done_for_current_image = False
+            st.session_state.detected_zoom = 5000
+            st.session_state.zoom_factor_input = 5000
+            st.session_state.zoom_notification = None
+
+        # Run OCR scale detection once per image, whenever it's enabled. This must
+        # happen here, before the sidebar widgets render below, so that a freshly
+        # uploaded image (OCR already on) and OCR being ticked on for the current
+        # image both pick up the result in the same run -- updating
+        # zoom_factor_input after its widget has rendered would raise a
+        # StreamlitAPIException.
+        if st.session_state.enable_ocr and not st.session_state.ocr_done_for_current_image:
+            run_ocr_zoom_detection(st.session_state.original_img)
+            st.session_state.ocr_done_for_current_image = True
 
     # ==========================
     # 2. SIDEBAR SETTINGS (Rendered after processing upload)
@@ -96,38 +165,53 @@ def main():
     if uploaded_file is not None:
         with st.sidebar:
             st.subheader("Basic Settings")
-            fast_mask = st.checkbox("Fast Mask Processing", value=True)
-            modify_size = st.checkbox("Modify Processing Size")
-            processing_size = st.number_input("Processing Size (px)", min_value=128, max_value=2048, step=64, value=512) if modify_size else 512
-            
+            st.checkbox(
+                "Auto-detect Scale (OCR)",
+                key="enable_ocr",
+                help="Uses Tesseract OCR to read the µm scale from the bottom of newly uploaded images. Requires Tesseract to be installed on this machine."
+            )
+            fast_mask = st.checkbox("Fast Mask Processing", key="fast_mask")
+            modify_size = st.checkbox("Modify Processing Size", key="modify_size")
+            processing_size = st.number_input("Processing Size (px)", min_value=128, max_value=2048, step=64, key="processing_size") if modify_size else 512
+
             with st.expander("Show Advanced Options"):
-                crop_legend = st.checkbox("Crop Legend")
-                crop_height = st.number_input("Crop Height (px from bottom)", min_value=1, value=100) if crop_legend else None
-                
+                crop_legend = st.checkbox("Crop Legend", key="crop_legend")
+                crop_height = st.number_input("Crop Height (px from bottom)", min_value=1, key="crop_height") if crop_legend else None
+
                 st.markdown("**Grain Size Parameters**")
-                # This naturally grabs the newly OCR'd value without needing a rerun
-                zoom_factor = st.number_input("Image Width (µm) for Scale", value=st.session_state.detected_zoom, step=10)
-                grain_lines = st.slider("Grain Size Grid Lines (H & V)", min_value=1, max_value=20, value=5)
-                
+                zoom_factor = st.number_input("Image Width (µm) for Scale", step=10, key="zoom_factor_input")
+                grain_lines = st.slider("Grain Size Grid Lines (H & V)", min_value=1, max_value=20, key="grain_lines")
+
                 st.markdown("**Morphology Parameters**")
                 kernel_options = {0: 1/400, 1: 1/200, 2: 1/100, 3: 1/50, 4: 1/25, 5: 1/10}
-                open_idx = st.slider("Open Kernel Ratio (0-5)", 0, 5, 1)
-                close_idx = st.slider("Close Kernel Ratio (0-5)", 0, 5, 1)
-                open_iters = st.slider("Open Iterations", 0, 5, 1)
-                close_iters = st.slider("Close Iterations", 0, 5, 1)
-                
-                border_pixels = st.number_input("Border Width (px)", min_value=0, value=0)
+                open_idx = st.slider("Open Kernel Ratio (0-5)", 0, 5, key="open_idx")
+                close_idx = st.slider("Close Kernel Ratio (0-5)", 0, 5, key="close_idx")
+                open_iters = st.slider("Open Iterations", 0, 5, key="open_iters")
+                close_iters = st.slider("Close Iterations", 0, 5, key="close_iters")
+
+                border_pixels = st.number_input("Border Width (px)", min_value=0, key="border_pixels")
                 border_pixels = border_pixels if border_pixels > 0 else None
-                
+
                 border_ratios = {0: 0.05, 1: 0.10, 2: 0.15, 3: 0.20}
-                border_ratio_idx = st.slider("Border Ratio Level (0-3)", 0, 3, 1)
-                
-                threshold = st.slider("Threshold (0 = Auto)", 0, 255, 0)
-                mask_threshold = st.slider("Mask Threshold (0 = Auto)", 0, 255, 0)
-                
+                border_ratio_idx = st.slider("Border Ratio Level (0-3)", 0, 3, key="border_ratio_idx")
+
+                threshold = st.slider("Threshold (0 = Auto)", 0, 255, key="threshold")
+                mask_threshold = st.slider("Mask Threshold (0 = Auto)", 0, 255, key="mask_threshold")
+
             st.subheader("Analysis Actions")
             if st.button("recalculate", type="primary", use_container_width=True):
                 st.session_state.needs_calc = True
+
+            has_param_changes = any(
+                st.session_state[key] != default for key, default in PARAM_DEFAULTS.items()
+            )
+            if st.button(
+                "Reset Default Parameters",
+                disabled=not has_param_changes,
+                use_container_width=True
+            ):
+                st.session_state.pending_reset = True
+                st.rerun()
 
     # ==========================
     # 3. MAIN CONTENT AREA (Calculations & Results)
@@ -254,7 +338,7 @@ def main():
                 key="canvas_original",
             )
             
-            if st.button("Calculate Selected Region Porosity"):
+            if st.button("Calculate Selected Region Porosity", type="primary", use_container_width=True):
                 if canvas_result.json_data is not None and len(canvas_result.json_data["objects"]) > 0:
                     last_shape = canvas_result.json_data["objects"][-1]
                     
@@ -319,8 +403,8 @@ def main():
                 )
                 
                 col_c, col_d = st.columns(2)
-                
-                if col_c.button("Erase Selection"):
+
+                if col_c.button("Erase Selection", type="primary", use_container_width=True):
                     if canvas_mask.json_data is not None and len(canvas_mask.json_data["objects"]) > 0:
                         img_h, img_w = st.session_state.mask.shape
                         
@@ -359,7 +443,7 @@ def main():
                     else:
                         st.warning("Please draw at least one rectangle first.")
                 
-                if col_d.button("Reset Erasures"):
+                if col_d.button("Reset Erasures", use_container_width=True):
                     st.session_state.erased_boxes = []
                     st.warning("Erasures cleared. Click 'recalculate' in the sidebar to restore the default mask.")
             else:
