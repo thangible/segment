@@ -7,5 +7,5 @@ Features: legend cropping, fast mask processing, region selection, and in-memory
    - uv sync
      if you dont have uv install at https://docs.astral.sh/uv/
 
-2. Run directly:
-   python porosity_app.py
+2. Activate virtual env
+3. run with streamlit run .\streamlit_app.py
