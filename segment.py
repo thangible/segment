@@ -31,7 +31,8 @@ def crop_legend(img, img_path, png_legend_ratio=1/45,
 
 
 def select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio=1/200, close_kernel_ratio=1/200,
-                             open_iterations=1, close_iterations=1, processing_size=512, threshold_at_full_res=True):
+                             open_iterations=1, close_iterations=1, processing_size=512, threshold_at_full_res=True,
+                             shrink_ratio=0.0):
     """
     Select area of interest using morphological operations, with image resizing for speed.
 
@@ -45,6 +46,11 @@ def select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio=1/2
     `threshold_at_full_res` only controls the initial pixel classification: True computes
     the Otsu/manual threshold on the full-resolution image (more precise, "accurate" mode);
     False computes it on the already-downsized copy (faster, slightly coarser, "fast" mode).
+
+    `shrink_ratio` pulls the mask boundary inward so it doesn't hug the sample's outer edge
+    (which often has rough polishing/mounting artifacts). It's applied last, after open and
+    close, so it isn't undone by close re-filling what shrink just eroded away -- shrink is
+    meant to trim the final boundary, not interact with the hole-filling step.
     """
     original_height, original_width = processed_img.shape[:2]
     max_dimension = max(original_height, original_width)
@@ -85,7 +91,12 @@ def select_area_of_interest(processed_img, mask_threshold, open_kernel_ratio=1/2
         close_kernel_size = max(1, int(new_height * close_kernel_ratio))
         close_kernel = np.ones((close_kernel_size, close_kernel_size), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=close_iterations)
-    
+
+    if shrink_ratio > 0:
+        shrink_kernel_size = max(1, int(new_height * shrink_ratio))
+        shrink_kernel = np.ones((shrink_kernel_size, shrink_kernel_size), np.uint8)
+        mask = cv2.erode(mask, shrink_kernel, iterations=1)
+
     if resize_factor != 1.0:
         mask = cv2.resize(mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
@@ -149,10 +160,10 @@ def calculate_porosity_from_images(original_img, mask, manual_threshold=0):
 
 
 def analyze_porosity(img_input, crop_legend_enabled=False, open_kernel_ratio=1/200, close_kernel_ratio=1/200,
-                    manual_threshold=0, mask_threshold=0, use_area_of_interest=True, open_iterations=1, close_iterations=1, 
+                    manual_threshold=0, mask_threshold=0, use_area_of_interest=True, open_iterations=1, close_iterations=1,
                     border_pixels=None, border_ratio=0.10, fast_mask_enabled=True, processing_size=512,
                     png_legend_ratio=1/45, bmp_legend_height=0.08, bmp_legend_height_value=200,
-                    bmp_legend_width=0.4, bmp_legend_width_value=3000, crop_height=None):
+                    bmp_legend_width=0.4, bmp_legend_width_value=3000, crop_height=None, shrink_ratio=0.0):
     
     if isinstance(img_input, str):
         og_img = cv2.imread(img_input)
@@ -175,7 +186,7 @@ def analyze_porosity(img_input, crop_legend_enabled=False, open_kernel_ratio=1/2
         mask = select_area_of_interest(
             processed_img, mask_threshold, open_kernel_ratio, close_kernel_ratio,
             open_iterations, close_iterations, processing_size=processing_size,
-            threshold_at_full_res=not fast_mask_enabled,
+            threshold_at_full_res=not fast_mask_enabled, shrink_ratio=shrink_ratio,
         )
     else:
         mask = np.ones_like(processed_img) * 255
